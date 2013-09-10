@@ -1,0 +1,1601 @@
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<script type="text/javascript" src="./glMatrix.js"></script>
+<script type="text/javascript" src="./jquery-1.7.1.min.js"></script>
+<!-- <script type="text/javascript" src="../debug/core/embed.js"></script> -->
+<!--script type="text/javascript" src="./webgl-debug.js"></script-->
+<script type="text/javascript" src="./model.js"></script>
+
+<script type="text/javascript" src="./cubebuffers.js"></script>
+
+<script id="depth-shader-vs" type="x-shader/x-vertex">
+precision highp float;
+attribute vec3 aVertexPosition;
+
+
+
+uniform mat4 uVMatrix;              //View
+uniform mat4 uPMatrix;              //Projection
+uniform mat4 uWMatrix;
+uniform mat4 uRMatrix;
+
+varying vec4 vPosition;
+
+void main (){
+	gl_Position =uPMatrix* uVMatrix * uWMatrix  * uRMatrix * vec4(aVertexPosition, 1.0);
+	vPosition = gl_Position;
+}
+</script>
+<script id="depth-shader-fs" type="x-shader/x-fragment">
+precision highp float;
+const float Near = 0.0;
+const float Far = 10.0;
+const float LinearDepthConstant = 1.0 / (Far - Near);
+
+vec4 pack (float depth)
+{
+    const vec4 bias = vec4(1.0 / 255.0,
+                1.0 / 255.0,
+                1.0 / 255.0,
+                0.0);
+
+    float r = depth;
+    float g = fract(r * 255.0);
+    float b = fract(g * 255.0);
+    float a = fract(b * 255.0);
+    vec4 colour = vec4(r, g, b, a);
+    
+    return colour - (colour.yzww * bias);
+}
+
+varying vec4 vPosition;
+
+void main(){
+
+	float linearDepth =pow(length(vPosition.xyz/vPosition.w),2.0);
+	gl_FragColor = pack(linearDepth);
+	// gl_FragColor = vec4(linearDepth,linearDepth,linearDepth,1.0);
+	// gl_FragColor = vec4(0.0,1.0,0.0,1.0);
+}
+</script>
+<!--
+-->
+
+
+
+<script id="line-shader-vs" type="x-shader/x-vertex">
+precision highp float;
+attribute vec3 aVertexPosition;
+uniform mat4 uVMatrix;              //View
+uniform mat4 uPMatrix;              //Projection
+uniform mat4 uWMatrix;	
+void main() {
+  gl_Position = uPMatrix * uVMatrix * uWMatrix * vec4(aVertexPosition, 1.0);
+}
+</script>
+<script id='line-shader-fs' type="x-shader/x-fragment">
+precision highp float;
+uniform vec3 color;
+void main() {
+	gl_FragColor = vec4(color,1.0);
+}
+</script>
+
+<!--base shader-->
+<script id="base-shader-vs" type="x-shader/x-vertex">
+precision highp float;
+const int NUM_LIGHT = 4;
+attribute vec3 aVertexNormal;
+attribute vec2 aTextureCoord;
+attribute vec3 aVertexPosition;
+
+uniform mat4 uVMatrix;              //View
+uniform mat4 uPMatrix;              //Projection
+uniform mat4 uRMatrix;	
+uniform mat4 uWMatrix;			
+uniform int numOfLights;
+uniform mat4 uLightVMatrix[NUM_LIGHT];
+uniform mat4 uLightPMatrix[NUM_LIGHT];
+
+varying vec2 vTextureCoord;
+varying vec4 vVertexLightPosition[NUM_LIGHT];
+varying vec3 vWorldPosition;
+varying vec3 vVertexNormal;
+void main(){
+	vec4 position = uWMatrix* uRMatrix * vec4(aVertexPosition, 1.0);
+    gl_Position = uPMatrix * uVMatrix * position;
+    for(int i=0;i<5;i++){
+    	// if(i == numOfLights)break;
+    	vVertexLightPosition[i]= uLightPMatrix[i] * uLightVMatrix[i] * position;
+    }
+    vVertexNormal = aVertexNormal;
+    vTextureCoord = aTextureCoord;
+    vWorldPosition = position.xyz/position.w;
+
+}
+</script>
+<script id="base-shader-fs" type="x-shader/x-fragment">
+precision highp float;
+const int NUM_LIGHT = 4;
+const float SHADOW_STRENGH = 0.3;
+
+uniform sampler2D depthMap[NUM_LIGHT];
+uniform vec3 lightPos[NUM_LIGHT];
+uniform vec3 lightDir[NUM_LIGHT];
+uniform int numOfLights;
+
+uniform vec3 cameraPosition;
+
+/*
+Material Uniform
+*/
+
+uniform float reflectivity;
+uniform float refractivity;
+uniform bool useTexture;
+uniform vec3 uColor;
+
+uniform sampler2D texture;
+
+
+varying vec2 vTextureCoord;
+varying vec4 vVertexLightPosition[NUM_LIGHT];
+varying vec3 vWorldPosition;
+varying vec3 vVertexNormal;
+
+
+
+
+float unpack (vec4 colour)
+{
+    const vec4 bitShifts = vec4(1.0,
+                    1.0 / 255.0,
+                    1.0 / (255.0 * 255.0),
+                    1.0 / (255.0 * 255.0 * 255.0));
+    return dot(colour, bitShifts);
+}
+void main() {
+	float shadow = 1.0;
+	float light = 1.0;
+	vec3 sightDirection = normalize(vWorldPosition - cameraPosition);
+	vec3 color = vec3(0.0);
+	float shadowBrightNess = 0.0;
+	float inShadow =0.0;
+	for (int i = 0; i < NUM_LIGHT; i++) {
+		if (i >= numOfLights) {
+			vec3 depthCoord = vVertexLightPosition[i].xyz / vVertexLightPosition[i].w;
+		}else{
+
+
+		inShadow = 0.0;
+		vec3 depthCoord = vVertexLightPosition[i].xyz / vVertexLightPosition[i].w;
+		vec3 lightVec = normalize(lightPos[i] - vWorldPosition);
+		float l = dot(vVertexNormal, lightVec);
+		shadow = 1.0;
+		if (l > 0.0) {
+			if (l > 0.2) {
+				depthCoord.z -= 0.00001;
+				float depth = pow(length(depthCoord), 2.0);
+				depthCoord.xy *= 0.5;
+				depthCoord.xy += 0.5;
+				float depthInMap;
+				depthInMap = unpack(texture2D(depthMap[i], depthCoord.xy));
+				if((depth - depthInMap) > 0.0008 ){
+					shadow = SHADOW_STRENGH;
+					inShadow = 1.0;
+				}
+			}
+
+			// if (inShadow == 0.0 ) {
+				float spotLight = 0.0;
+				spotLight = pow(max(-dot(lightVec, normalize(lightDir[i])), 0.0), 10.0);
+				// spotLight = -dot(lightVec,normalize(lightDir[i]));
+				vec3 r = -normalize(reflect(lightVec, vVertexNormal));
+				float s = pow(max(dot(r, -sightDirection), 0.0), 30.0);
+
+				float d = distance(vWorldPosition, lightPos[i]);
+				float a = 1.0 / (1.0 * d);
+
+				color +=vec3(l+s*a*reflectivity*spotLight)*shadow;
+			// }
+		}else{
+			color += vec3(0.1);
+		}
+		}
+		//break;
+	}
+	color = clamp(color,0.0,1.0);
+	// color *= 0.78;
+	vec3 textureColor =vec3(1.0);
+	float ratio = 1.0;
+	if(useTexture){
+		textureColor = texture2D(texture,vTextureCoord).rgb;
+		ratio = 0.5;
+	}
+	gl_FragColor = vec4(color*textureColor , 1.0);
+	 //gl_FragColor = vec4(color*shadowBrightNess,1.0);
+
+	// gl_FragColor =texture2D(texture,vTextureCoord);
+}
+</script>
+
+
+<!--cubemap objects shader-->
+<script id="cubemap-shader-vs" type="x-shader/x-vertex">
+precision highp float;
+
+const int NUM_LIGHT = 3;
+
+attribute vec3 aVertexPosition;
+attribute vec3 aVertexNormal;
+attribute vec2 aTextureCoord;
+
+uniform mat4 uVMatrix;              //View
+uniform mat4 uPMatrix;              //Projection
+uniform mat4 uRMatrix;	
+uniform mat4 uWMatrix;			
+
+uniform mat4 uLightVMatrix[4];
+uniform mat4 uLightPMatrix[4];
+uniform int numOfLights;
+
+uniform vec3 cameraPosition;
+
+varying mat4 vVertexLightPosition;
+varying vec3 vWorldPosition;
+varying vec3 vVertexNormal;
+varying vec2 vTextureCoord; 
+
+
+void main(){
+	vec4 position = uWMatrix*uRMatrix * vec4(aVertexPosition,1.0);
+    gl_Position = uPMatrix * uVMatrix * position;
+    vWorldPosition = position.xyz/position.w;
+    vVertexNormal =  (uRMatrix * vec4(aVertexNormal,0.0)).xyz;
+   	for(int i=0;i<NUM_LIGHT;i++){
+    	// if(i == numOfLights)break;
+    	vVertexLightPosition[i] = uLightPMatrix[i] * uLightVMatrix[i] * position;
+    }
+    // vVertexLightPosition= uLightPMatrix * uLightVMatrix * position;
+    // vVertexLightPosition = cScaleMatrix * vec4(vVertexLightPosition.xyz,1.0);
+    vTextureCoord = aTextureCoord;
+}
+</script>
+<script id="cubemap-shader-fs" type="x-shader/x-fragment">
+precision highp float;
+
+const int NUM_LIGHT = 4;
+
+uniform samplerCube envMap;
+
+uniform int numOfLights;
+uniform vec3 lightPos[4];
+uniform vec3 lightDir[4];
+
+uniform vec3 cameraPosition;
+uniform vec3 uCameraNormal;
+
+uniform float glossy;
+uniform vec3 uColor;
+
+uniform vec3 center;
+
+uniform float reflectivity;
+uniform float refractivity;
+
+
+varying vec3 vVertexNormal;
+varying mat4 vVertexLightPosition;
+varying vec3 vWorldPosition;
+varying vec2 vTextureCoord;
+
+
+float random(vec3 scale, float seed) {
+	return fract(sin(dot(gl_FragCoord.xyz + seed, scale)) * 43758.5453 + seed);
+}
+
+vec3 uniformlyRandomDirection(float seed) {
+	float u = random(vec3(12.9898, 78.233, 151.7182), seed);
+	float v = random(vec3(63.7264, 10.873, 623.6736), seed);
+	float z = 1.0 - 2.0 * u;
+	float r = sqrt(1.0 - z * z);
+	float angle = 6.283185307179586 * v;
+	return vec3(r * cos(angle), r * sin(angle), z);
+}
+vec3 cosineWeightedDirection(float seed, vec3 normal) {
+	float u = random(vec3(12.9898, 78.233, 151.7182), seed);
+	float v = random(vec3(63.7264, 10.873, 623.6736), seed);
+	float r = sqrt(u);
+	float angle = 6.283185307179586 * v;
+	// compute basis from normal
+	vec3 sdir, tdir;
+	if (abs(normal.x) < .5) {
+		sdir = cross(normal, vec3(1, 0, 0));
+	} else {
+		sdir = cross(normal, vec3(0, 1, 0));
+	}
+	tdir = cross(normal, sdir);
+	return r * cos(angle) * sdir + r * sin(angle) * tdir + sqrt(1. - u) * normal;
+}
+
+void main() {
+	
+	vec3 sightDirection =normalize(vWorldPosition - cameraPosition) ;
+	vec3 color=vec3(0.0);
+	for (int i = 0; i < NUM_LIGHT; i++) {
+		if (i >= numOfLights) {
+			vec3 depthCoord = vVertexLightPosition[i].xyz / vVertexLightPosition[i].w;
+		}else{
+
+
+		vec3 depthCoord = vVertexLightPosition[i].xyz / vVertexLightPosition[i].w;
+		vec3 lightVec = normalize(lightPos[i] - vWorldPosition);
+		float l = dot(vVertexNormal, lightVec);
+		if (l > 0.0) {
+
+			// if (inShadow == 0.0 ) {
+				float spotLight = 0.0;
+				spotLight = pow(max(-dot(lightVec, normalize(lightDir[i])), 0.0), 20.0);
+				// spotLight = -dot(lightVec,normalize(lightDir[i]));
+				vec3 r = -normalize(reflect(lightVec, vVertexNormal));
+				float s = pow(max(dot(r, -sightDirection), 0.0), 30.0);
+
+				float d = distance(vWorldPosition, lightPos[i]);
+				float a = 1.0 / (1.0 * d);
+
+				color += vec3(s*reflectivity*spotLight);
+			// }
+		}
+		}
+	}
+
+
+	color = clamp(color,0.0,1.0);
+	
+	// color *=2.0;
+	// color +=1.5;
+	vec3 offset = vWorldPosition - center;
+	vec3 cubeColor = vec3(0.0);
+	for(int i=0;i<15;i++){
+		vec3 glossyDirection = sightDirection + cosineWeightedDirection(pow(1.2,float(i)),vVertexNormal) * glossy;
+		cubeColor = mix(cubeColor,textureCube(envMap, reflect(glossyDirection,vVertexNormal)+offset*8.0).xyz,pow(0.8,float(i)));
+	}
+	// cubeColor = textureCube(envMap,normalize(reflect(vWorldPosition - cameraPosition,vVertexNormal))+offset*8.0).xyz;
+	gl_FragColor = vec4((cubeColor+color)*uColor,1.0);
+}
+</script>
+
+
+
+<!--sky box shader-->
+<script id="skybox-shader-fs" type="x-shader/x-fragment">
+precision highp float;
+
+varying vec3 vVertexNormal;
+varying vec3 vVertexPosition;
+
+uniform samplerCube uSampler;
+uniform vec3 uCameraNormal;	
+uniform bool cutbox;
+//uniform sampler2D uSampler;         //Texture being applied to Model
+void main(){
+	// vec3 direction = vVertexPosition - uCameraNormal;
+	if(cutbox&&dot(vVertexNormal,uCameraNormal) <= 0.0)discard;
+    gl_FragColor = textureCube(uSampler, vVertexPosition);
+    // gl_FragColor = vec4(1.0,0.0,0.0,1.0);
+   // if(vVertexNormal[2] == -1.0)discard;
+   
+}
+</script>
+
+<script id="skybox-shader-vs" type="x-shader/x-vertex">
+attribute vec3 aVertexPosition;
+attribute vec3 aVertexNormal;
+
+uniform mat4 uVMatrix;              //View
+uniform mat4 uPMatrix;              //Projection
+uniform mat4 uWMatrix;	
+		
+
+varying vec3 vVertexNormal;
+varying vec3 vVertexPosition;
+
+void main(){
+    gl_Position = uPMatrix * uVMatrix * uWMatrix * vec4(aVertexPosition, 1.0);
+    //gl_Position = vec4(aVertexPosition,1.0);
+    vVertexPosition = aVertexPosition;
+    vVertexNormal = aVertexNormal;
+    
+}
+</script>
+<script type="text/javascript">
+
+function CubeMap(px, nx, py, ny, pz, nz) {
+	this.readyEvent=new Event('CUBEMAP_READY');
+	this._ct = 0;
+	this.images = {
+		"px": px.image,
+		"nx": nx.image,
+		"py": py.image,
+		"ny": ny.image,
+		"pz": pz.image,
+		"nz": nz.image
+	};
+	this.mapsize=0;
+	this.cubemodel = new Cube([1,1,1]);
+	this.type=webgl.TEXTURE_CUBE_MAP;
+	this.texture=null;
+
+	this.init = function() {
+		this.mapsize=this.images.px.height;
+		this.texture=webgl.createTexture();
+		webgl.pixelStorei(webgl.UNPACK_FLIP_Y_WEBGL, false);
+		webgl.bindTexture(webgl.TEXTURE_CUBE_MAP, this.texture);
+
+		webgl.texImage2D(webgl.TEXTURE_CUBE_MAP_POSITIVE_X, 0, webgl.RGBA, webgl.RGBA, webgl.UNSIGNED_BYTE, this.images.px);
+		webgl.texImage2D(webgl.TEXTURE_CUBE_MAP_NEGATIVE_X, 0, webgl.RGBA, webgl.RGBA, webgl.UNSIGNED_BYTE, this.images.nx);
+		webgl.texImage2D(webgl.TEXTURE_CUBE_MAP_POSITIVE_Y, 0, webgl.RGBA, webgl.RGBA, webgl.UNSIGNED_BYTE, this.images.py);
+		webgl.texImage2D(webgl.TEXTURE_CUBE_MAP_NEGATIVE_Y, 0, webgl.RGBA, webgl.RGBA, webgl.UNSIGNED_BYTE, this.images.ny);
+		webgl.texImage2D(webgl.TEXTURE_CUBE_MAP_POSITIVE_Z, 0, webgl.RGBA, webgl.RGBA, webgl.UNSIGNED_BYTE, this.images.pz);
+		webgl.texImage2D(webgl.TEXTURE_CUBE_MAP_NEGATIVE_Z, 0, webgl.RGBA, webgl.RGBA, webgl.UNSIGNED_BYTE, this.images.nz);
+
+		webgl.texParameteri(webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MAG_FILTER, webgl.LINEAR);
+		webgl.texParameteri(webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MIN_FILTER, webgl.LINEAR_MIPMAP_LINEAR);
+		webgl.texParameteri(webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_WRAP_S, webgl.CLAMP_TO_EDGE);
+		webgl.texParameteri(webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_WRAP_T, webgl.CLAMP_TO_EDGE);
+		webgl.generateMipmap(webgl.TEXTURE_CUBE_MAP);
+
+		webgl.bindTexture(webgl.TEXTURE_CUBE_MAP, null);
+
+
+		// this.texture2d = webgl.createTexture();
+		// webgl.bindTexture(webgl.TEXTURE_2D, this.texture2d);
+		// webgl.texParameteri(webgl.TEXTURE_2D, webgl.TEXTURE_MAG_FILTER, webgl.LINEAR);
+  //       webgl.texParameteri(webgl.TEXTURE_2D, webgl.TEXTURE_MIN_FILTER, webgl.LINEAR);
+		// webgl.texImage2D(webgl.TEXTURE_2D, 0, webgl.RGBA, webgl.RGBA, webgl.UNSIGNED_BYTE, this.images.px);
+		// webgl.bindTexture(webgl.TEXTURE_2D,null);
+
+
+		
+
+	}.bind(this);
+	
+	this.init();
+};
+
+
+Camera = function(position,tarloc,up,type){
+	this.position =position;
+	this.tarloc = tarloc;
+	this.up = up;
+	this.r=vec3.dist(this.position,this.tarloc);
+	this.normal = vec3.create();
+	vec3.subtract(this.tarloc,this.position,this.normal);
+	this.sight_dis=Math.sqrt(this.r*this.r-this.normal[1]*this.normal[1]);
+	var n2 = vec3.create();
+	vec3.normalize(this.normal,n2);
+	// vec3.negate(n2);
+	var crossvec = vec3.cross([1,0,0],n2);
+	var acos = vec3.dot([1,0,0],n2);
+	this.view_angle_horizon=((crossvec[1]<0)?Math.PI:0)+Math.acos(acos);
+	acos = vec3.dot([0,1,0],n2);
+	this.view_angle_vertical=Math.acos(acos);
+
+	this.center=['camera','target'][type];
+}
+
+Camera.prototype.getViewMatrix = function() {
+	if (!isNaN(this.view_angle_horizon)) {
+		if (this.center == 'camera') {
+			this.tarloc = [this.sight_dis * Math.cos(this.view_angle_horizon), this.tarloc[1], -this.sight_dis * Math.sin(this.view_angle_horizon)];
+			vec3.add(this.tarloc, [this.position[0], 0, this.position[2]]);
+		} else if (this.center == 'target') {
+			var angle = this.view_angle_horizon;
+			this.position = [this.sight_dis * Math.sin(angle), -this.r*Math.cos(this.view_angle_vertical), this.sight_dis * Math.cos(angle)];
+			vec3.add(this.position, this.tarloc);
+		}
+	}
+	vec3.subtract(this.tarloc, this.position, this.normal);
+	return mat4.lookAt(this.position, this.tarloc, this.up);
+}
+
+
+/*
+Shadow Mapping
+*/
+ShadowMap = function(){
+	
+
+    var framebuffer = webgl.createFramebuffer();
+    webgl.bindFramebuffer(webgl.FRAMEBUFFER, framebuffer);
+    framebuffer.width=2048;
+    framebuffer.height=2048;
+    this.framebuffer = framebuffer;
+
+    this.texture = webgl.createTexture();
+	webgl.bindTexture(webgl.TEXTURE_2D, this.texture);
+   	webgl.texParameteri(webgl.TEXTURE_2D, webgl.TEXTURE_MIN_FILTER, webgl.NEAREST);
+    webgl.texParameteri(webgl.TEXTURE_2D, webgl.TEXTURE_MAG_FILTER, webgl.NEAREST);
+    webgl.texParameteri(webgl.TEXTURE_2D, webgl.TEXTURE_WRAP_S, webgl.CLAMP_TO_EDGE);
+    webgl.texParameteri(webgl.TEXTURE_2D, webgl.TEXTURE_WRAP_T, webgl.CLAMP_TO_EDGE);
+    //webgl.generateMipmap(webgl.TEXTURE_2D);
+    webgl.texImage2D(webgl.TEXTURE_2D, 0 ,webgl.RGBA,framebuffer.width, framebuffer.height,0,webgl.RGBA, webgl.FLOAT,null);
+	webgl.bindTexture(webgl.TEXTURE_2D, null);
+
+    var renderbuffer = webgl.createRenderbuffer();
+    webgl.bindRenderbuffer(webgl.RENDERBUFFER, renderbuffer);
+    webgl.renderbufferStorage(webgl.RENDERBUFFER, webgl.DEPTH_COMPONENT16, framebuffer.width, framebuffer.height);
+	
+    webgl.framebufferTexture2D(webgl.FRAMEBUFFER, webgl.COLOR_ATTACHMENT0, webgl.TEXTURE_2D, this.texture, 0);
+    webgl.framebufferRenderbuffer(webgl.FRAMEBUFFER, webgl.DEPTH_ATTACHMENT, webgl.RENDERBUFFER, renderbuffer);
+
+	
+    var status = webgl.checkFramebufferStatus(webgl.FRAMEBUFFER);
+	if (status != webgl.FRAMEBUFFER_COMPLETE) {
+			throw ("webgl.checkFramebufferStatus() returned " + status);
+	}
+	webgl.bindBuffer(webgl.ARRAY_BUFFER,null);
+	 webgl.bindTexture(webgl.TEXTURE_2D, null);
+    webgl.bindRenderbuffer(webgl.RENDERBUFFER, null);
+    webgl.bindFramebuffer(webgl.FRAMEBUFFER, null);
+   
+};
+
+ShadowMap.prototype.bind=function(){
+	webgl.bindFramebuffer(webgl.FRAMEBUFFER, this.framebuffer);
+	webgl.viewport(0,0,this.framebuffer.width,this.framebuffer.height);
+	webgl.clearColor(0.0,0.0,0.0, 1.0);
+    webgl.clearDepth(1.0);
+    webgl.clear(webgl.COLOR_BUFFER_BIT|webgl.DEPTH_BUFFER_BIT);
+};
+
+ShadowMap.prototype.unbind=function(){
+	webgl.bindFramebuffer(webgl.FRAMEBUFFER, null);
+	webgl.viewport(	0, 0, webgl.viewportWidth, webgl.viewportHeight);
+	webgl.clearColor(0.0,0.0,0.0, 1.0);
+    webgl.clearDepth(1.0);
+    webgl.clear(webgl.COLOR_BUFFER_BIT|webgl.DEPTH_BUFFER_BIT);
+};
+
+Light =function(pos,tar){
+	this.pos = pos;
+	this.tar = tar;
+	this.projection = mat4.create();
+	this.view= mat4.lookAt(this.pos,this.tar,[0,1,0]);
+	this.projection=mat4.create();
+	mat4.perspective(90,1,0.1,100.0,this.projection);
+	this.shadowmap = new ShadowMap();
+}
+/*
+Render
+*/
+var MAX_LIGHTS_NUM=3;
+Render = function(canvas, map) {
+	this.view = mat4.create();
+	this.camera = null;
+	this.projection = mat4.create();
+	this.scalefactor=1;
+	this._canvas = canvas;
+	this.map = map;
+	this.shaderProgram={};
+	this.objects=[];
+	this.cubemapObjects = [];
+	this.view_angle=45;
+	this.numOfLights=2;
+	this.lights=[];
+
+	this._init = function() {
+		mat4.identity(this.projection);
+		mat4.identity(this.view);
+		mat4.perspective(this.view_angle, this._canvas.clientWidth / this._canvas.clientHeight,0.1, 1000.0, this.projection);
+		// mat4.rotate(this.view, Math.PI, [0, 1, 0]);
+		this.camera = new Camera([0.9,0.3,0.9],[0,0,0],[0,1,0],1);
+		// this.camera = new Camera([0,0,0],[-1,0,0],[0,1,0],0);
+		this.view=this.camera.getViewMatrix();
+		// this.map.cubemodel.scale=[0.1,0.1,0.1];
+		// mat4.identity(this.view);
+		this.cubeframebuffer= new CubeFrameBuffers(this.map.mapsize,true);
+
+		this.textureTest = webgl.createTexture();
+		webgl.bindTexture(webgl.TEXTURE_2D, this.textureTest);
+		// webgl.pixelStorei(webgl.UNPACK_FLIP_Y_WEBGL, true);
+  		webgl.texParameteri(webgl.TEXTURE_2D, webgl.TEXTURE_MAG_FILTER, webgl.LINEAR);
+    	webgl.texParameteri(webgl.TEXTURE_2D, webgl.TEXTURE_MIN_FILTER, webgl.LINEAR);
+	    // webgl.generateMipmap(webgl.TEXTURE_2D);
+ 	   	webgl.texImage2D(webgl.TEXTURE_2D, 0, webgl.RGBA, webgl.RGBA, webgl.UNSIGNED_BYTE, this.map.images.px);
+ 	  	webgl.bindTexture(webgl.TEXTURE_2D, null);
+
+		this._initShader();
+		
+
+	};
+
+	this.getShader = function(id) {
+		var shaderScript = document.getElementById(id);
+		if (!shaderScript) {
+			return null;
+		}
+
+		var str = "";
+		var k = shaderScript.firstChild;
+		while (k) {
+			if (k.nodeType == 3) {
+				str += k.textContent;
+			}
+			k = k.nextSibling;
+		}
+
+		var shader;
+		if (shaderScript.type == "x-shader/x-fragment") {
+			shader = webgl.createShader(webgl.FRAGMENT_SHADER);
+		} else if (shaderScript.type == "x-shader/x-vertex") {
+			shader = webgl.createShader(webgl.VERTEX_SHADER);
+		} else {
+			return null;
+		}
+
+		webgl.shaderSource(shader, str);
+		webgl.compileShader(shader);
+
+		if (!webgl.getShaderParameter(shader, webgl.COMPILE_STATUS)) {
+			alert(webgl.getShaderInfoLog(shader));
+			return null;
+		}
+
+		return shader;
+	};
+
+	this._attachShader = function(fragname,vertexname){
+		var fragmentShader = this.getShader(fragname);
+		var vertexShader = this.getShader(vertexname);
+
+		var shaderProgram = webgl.createProgram();
+		webgl.attachShader(shaderProgram, vertexShader);
+		webgl.attachShader(shaderProgram, fragmentShader);
+		webgl.linkProgram(shaderProgram);
+
+		if (!webgl.getProgramParameter(shaderProgram, webgl.LINK_STATUS)) {
+			console.error("Could not initialise shaders");
+		}
+		return shaderProgram;
+	};
+
+	this._initShader = function() {
+		var shaderProgram = this._attachShader("skybox-shader-fs","skybox-shader-vs")
+
+		webgl.useProgram(shaderProgram);
+
+		shaderProgram.vertexPositionAttribute = webgl.getAttribLocation(shaderProgram, "aVertexPosition");
+		// webgl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+
+
+		shaderProgram.vertexNormalAttribute = webgl.getAttribLocation(shaderProgram, "aVertexNormal");
+		// webgl.enableVertexAttribArray(shaderProgram.vertexNormalAttribute);
+
+		shaderProgram.attributeNum=2;
+
+		shaderProgram.pMatrixUniform = webgl.getUniformLocation(shaderProgram, "uPMatrix");
+		shaderProgram.mvMatrixUniform = webgl.getUniformLocation(shaderProgram, "uVMatrix");
+		shaderProgram.samplerUniform = webgl.getUniformLocation(shaderProgram, "uSampler");
+		shaderProgram.worldUniform = webgl.getUniformLocation(shaderProgram, "uWMatrix");
+		shaderProgram.cameraNormalUniform = webgl.getUniformLocation(shaderProgram, "uCameraNormal");
+		shaderProgram.cutboxUniform = webgl.getUniformLocation(shaderProgram, "cutbox");
+
+		this.shaderProgram["skybox"]=shaderProgram;
+
+		shaderProgram = this._attachShader("cubemap-shader-fs","cubemap-shader-vs");
+
+		webgl.useProgram(shaderProgram);
+
+		shaderProgram.vertexPositionAttribute = webgl.getAttribLocation(shaderProgram, "aVertexPosition");
+		// webgl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+
+
+		shaderProgram.vertexNormalAttribute = webgl.getAttribLocation(shaderProgram, "aVertexNormal");
+		// webgl.enableVertexAttribArray(shaderProgram.vertexNormalAttribute);
+
+		shaderProgram.vertexTextureCoordAttribute = webgl.getAttribLocation(shaderProgram, "aTextureCoord");
+		// webgl.enableVertexAttribArray(shaderProgram.vertexTextureCoordAttribute);
+		shaderProgram.attributeNum=3;
+
+		shaderProgram.pMatrixUniform = webgl.getUniformLocation(shaderProgram, "uPMatrix");
+		shaderProgram.mvMatrixUniform = webgl.getUniformLocation(shaderProgram, "uVMatrix");
+		shaderProgram.worldUniform = webgl.getUniformLocation(shaderProgram, "uWMatrix");
+		shaderProgram.rotationUniform = webgl.getUniformLocation(shaderProgram, "uRMatrix");
+
+		shaderProgram.lightVMatrixUniforms=[];
+		shaderProgram.lightPMatrixUniforms =[];
+		shaderProgram.lightPosUniforms =[];
+		shaderProgram.lightDirUniforms = [];
+		// shaderProgram.depthMapUniforms=[];
+		for(var i=0;i<=MAX_LIGHTS_NUM;i++){
+			shaderProgram.lightVMatrixUniforms.push( webgl.getUniformLocation(shaderProgram, "uLightVMatrix["+i+"]"));
+			shaderProgram.lightPMatrixUniforms.push(webgl.getUniformLocation(shaderProgram, "uLightPMatrix["+i+"]"));
+			shaderProgram.lightPosUniforms.push(webgl.getUniformLocation(shaderProgram, "lightPos["+i+"]"));
+			shaderProgram.lightDirUniforms.push(webgl.getUniformLocation(shaderProgram, "lightDir["+i+"]"));
+			// shaderProgram.depthMapUniforms.push(webgl.getUniformLocation(shaderProgram, "depthMap"));
+		} 
+
+		shaderProgram.numOfLightsUniform = webgl.getUniformLocation(shaderProgram, "numOfLights");
+		shaderProgram.centerUniform = webgl.getUniformLocation(shaderProgram, "center");
+		shaderProgram.colorUniform = webgl.getUniformLocation(shaderProgram, "uColor");
+	
+
+		shaderProgram.cameraPosUniform = webgl.getUniformLocation(shaderProgram, "cameraPosition");
+		shaderProgram.cameraNormalUniform = webgl.getUniformLocation(shaderProgram, "uCameraNormal");
+
+		shaderProgram.envMapUniform = webgl.getUniformLocation(shaderProgram, "envMap");
+		shaderProgram.glossyUniform = webgl.getUniformLocation(shaderProgram, "glossy");
+		shaderProgram.reflectivityUniform = webgl.getUniformLocation(shaderProgram, "reflectivity");		
+		shaderProgram.refractivityUniform = webgl.getUniformLocation(shaderProgram, "refractivity");
+
+		this.shaderProgram["cubemap"]=shaderProgram;
+
+		shaderProgram = this._attachShader("line-shader-fs","line-shader-vs");
+		webgl.useProgram(shaderProgram);
+		shaderProgram.vertexPositionAttribute = webgl.getAttribLocation(shaderProgram, "aVertexPosition");
+		// webgl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+
+		shaderProgram.attributeNum=1;
+
+		shaderProgram.pMatrixUniform = webgl.getUniformLocation(shaderProgram, "uPMatrix");
+		shaderProgram.mvMatrixUniform = webgl.getUniformLocation(shaderProgram, "uVMatrix");
+		shaderProgram.worldUniform = webgl.getUniformLocation(shaderProgram, "uWMatrix");
+		shaderProgram.colorUniform = webgl.getUniformLocation(shaderProgram, "color");
+
+		this.shaderProgram["line"]=shaderProgram;
+
+		shaderProgram = this._attachShader("depth-shader-fs","depth-shader-vs");
+		webgl.useProgram(shaderProgram);
+		shaderProgram.vertexPositionAttribute = webgl.getAttribLocation(shaderProgram, "aVertexPosition");
+		// webgl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+
+		shaderProgram.attributeNum=1;
+
+		shaderProgram.pMatrixUniform = webgl.getUniformLocation(shaderProgram, "uPMatrix");
+		shaderProgram.mvMatrixUniform = webgl.getUniformLocation(shaderProgram, "uVMatrix");
+		shaderProgram.worldUniform = webgl.getUniformLocation(shaderProgram, "uWMatrix");
+		shaderProgram.rotationUniform = webgl.getUniformLocation(shaderProgram, "uRMatrix");
+
+		this.shaderProgram["depth"]=shaderProgram
+
+		shaderProgram = this._attachShader("base-shader-fs","base-shader-vs");
+		webgl.useProgram(shaderProgram);
+		shaderProgram.vertexPositionAttribute = webgl.getAttribLocation(shaderProgram, "aVertexPosition");
+		// webgl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+		shaderProgram.vertexNormalAttribute = webgl.getAttribLocation(shaderProgram, "aVertexNormal");
+		// webgl.enableVertexAttribArray(shaderProgram.vertexNormalAttribute);
+		shaderProgram.textureCoordAttribute = webgl.getAttribLocation(shaderProgram, "aTextureCoord");
+		// webgl.enableVertexAttribArray(shaderProgram.textureCoordAttribute);
+
+		shaderProgram.attributeNum=3;
+
+
+		shaderProgram.pMatrixUniform = webgl.getUniformLocation(shaderProgram, "uPMatrix");
+		shaderProgram.mvMatrixUniform = webgl.getUniformLocation(shaderProgram, "uVMatrix");
+		shaderProgram.worldUniform = webgl.getUniformLocation(shaderProgram, "uWMatrix");
+		shaderProgram.rotationUniform = webgl.getUniformLocation(shaderProgram, "uRMatrix");
+
+		shaderProgram.lightVMatrixUniforms=[];
+		shaderProgram.lightPMatrixUniforms =[];
+		shaderProgram.lightPosUniforms =[];
+		shaderProgram.lightDirUniforms = [];
+		shaderProgram.depthMapUniforms=[];
+		for(var i=0;i<=MAX_LIGHTS_NUM;i++){
+			shaderProgram.lightVMatrixUniforms.push( webgl.getUniformLocation(shaderProgram, "uLightVMatrix["+i+"]"));
+			shaderProgram.lightPMatrixUniforms.push(webgl.getUniformLocation(shaderProgram, "uLightPMatrix["+i+"]"));
+			shaderProgram.lightPosUniforms.push(webgl.getUniformLocation(shaderProgram, "lightPos["+i+"]"));
+			shaderProgram.lightDirUniforms.push(webgl.getUniformLocation(shaderProgram, "lightDir["+i+"]"));
+			shaderProgram.depthMapUniforms.push(webgl.getUniformLocation(shaderProgram, "depthMap["+i+"]"));
+		} 
+
+		shaderProgram.numOfLightsUniform = webgl.getUniformLocation(shaderProgram, "numOfLights");
+	
+
+		shaderProgram.cameraPosUniform = webgl.getUniformLocation(shaderProgram, "cameraPosition");
+
+
+		shaderProgram.textureUniform = webgl.getUniformLocation(shaderProgram, "texture");		
+		shaderProgram.colorUniform = webgl.getUniformLocation(shaderProgram, "uColor");		
+		shaderProgram.useTextureUniform = webgl.getUniformLocation(shaderProgram, "useTexture");		
+		shaderProgram.reflectivityUniform = webgl.getUniformLocation(shaderProgram, "reflectivity");		
+		shaderProgram.refractivityUniform = webgl.getUniformLocation(shaderProgram, "refractivity");		
+			
+		this.shaderProgram["base"]=shaderProgram;
+
+
+
+	};
+
+
+	this._init();
+};
+
+Render.prototype.swtichShader=function(shaderProgram){
+	webgl.useProgram(shaderProgram);
+	for(var i =0;i<shaderProgram.attributeNum;i++){
+		webgl.enableVertexAttribArray(i);
+	}
+}
+
+Render.prototype.disableAttributes = function(shaderProgram){
+	for(var i =0;i<shaderProgram.attributeNum;i++){
+		webgl.disableVertexAttribArray(i);
+	}
+}
+
+Render.prototype.drawTextureToScreen = function(texture){
+
+}
+
+Render.prototype.drawShadows = function() {
+	webgl.colorMask(true, true, true, true);
+	webgl.depthMask(true);
+	webgl.clearColor(0, 0, 0, 1.0);
+	webgl.clearDepth(1);
+	webgl.clear(webgl.COLOR_BUFFER_BIT | webgl.DEPTH_BUFFER_BIT | webgl.STENCIL_BUFFER_BIT);
+	var program = this.shaderProgram["depth"];
+	this.swtichShader(program);
+
+	for (var i in this.lights) {
+		var light = this.lights[i];
+		var view = light.view;
+		var projection = light.projection;
+		light.shadowmap.bind();
+		webgl.uniformMatrix4fv(program.pMatrixUniform, false, projection);
+		webgl.uniformMatrix4fv(program.mvMatrixUniform, false, view);
+		for (var i in this.objects) {
+			var object = this.objects[i];
+			var scale = mat4.create();
+			var trans = mat4.create();
+			mat4.identity(trans);
+			mat4.identity(scale);
+			mat4.scale(scale, object.scale);
+			mat4.translate(trans, object.position);
+			mat4.multiply(trans, scale);
+			webgl.uniformMatrix4fv(program.rotationUniform, false, object.rotation);
+			webgl.uniformMatrix4fv(program.worldUniform, false, trans);
+			webgl.bindBuffer(webgl.ARRAY_BUFFER, object.Buffers.Vertex);
+			webgl.vertexAttribPointer(program.vertexPositionAttribute, object.Buffers.Vertex.itemSize, webgl.FLOAT, false, 0, 0);
+			for(var i in object.material){
+				webgl.bindBuffer(webgl.ELEMENT_ARRAY_BUFFER, object.Buffers.Index[i]);
+				webgl.drawElements(webgl.TRIANGLES, object.Buffers.Index[i].numItems, webgl.UNSIGNED_SHORT, 0);
+				
+			}
+		}
+
+		for(var i in this.cubemapObjects){
+			var object = this.cubemapObjects[i];
+			var scale = mat4.create();
+			var trans = mat4.create();
+			mat4.identity(trans);
+			mat4.identity(scale);
+			mat4.scale(scale, object.scale);
+			mat4.translate(trans, object.position);
+			mat4.multiply(trans, scale);
+			webgl.uniformMatrix4fv(program.rotationUniform, false, object.rotation);
+			webgl.uniformMatrix4fv(program.worldUniform, false, trans);
+			webgl.bindBuffer(webgl.ARRAY_BUFFER, object.Buffers.Vertex);
+			webgl.vertexAttribPointer(program.vertexPositionAttribute, object.Buffers.Vertex.itemSize, webgl.FLOAT, false, 0, 0);
+			for(var i in object.material){
+				webgl.bindBuffer(webgl.ELEMENT_ARRAY_BUFFER, object.Buffers.Index[i]);
+				webgl.drawElements(webgl.TRIANGLES, object.Buffers.Index[i].numItems, webgl.UNSIGNED_SHORT, 0);
+			}
+		}
+	}
+	this.disableAttributes(program);
+	this.lights[0].shadowmap.unbind();
+}
+// Render.prototype.drawShadowMap = function(){
+
+// 	var view = this.shadowmap.lightview;
+// 	var projection = this.shadowmap.projection;
+// 	this.shadowmap.bind();
+// 	webgl.colorMask(true, true, true, true);
+// 	webgl.depthMask(true);
+// 	webgl.clearColor(0, 0, 0, 1.0);
+// 	webgl.clearDepth(1);
+// 	webgl.clear(webgl.COLOR_BUFFER_BIT | webgl.DEPTH_BUFFER_BIT | webgl.STENCIL_BUFFER_BIT);
+// 	var program = this.shaderProgram["depth"];
+
+// 	this.swtichShader(program);
+
+// 	webgl.uniformMatrix4fv(program.pMatrixUniform, false, projection);
+// 	webgl.uniformMatrix4fv(program.mvMatrixUniform, false, view);
+
+
+// 	for (var i in this.objects) {
+// 		var object = this.objects[i];
+// 		var scale = mat4.create();
+// 		var trans = mat4.create();
+// 		mat4.identity(trans);
+// 		mat4.identity(scale);
+// 		mat4.scale(scale,object.scale);
+// 		mat4.translate(trans,object.position);
+// 		mat4.multiply(trans,scale);
+// 		// webgl.uniform3fv(program.centerUniform,object.position);
+// 		webgl.uniformMatrix4fv(program.rotationUniform, false, object.rotation);
+// 		webgl.uniformMatrix4fv(program.worldUniform,false,trans);
+// 		webgl.bindBuffer(webgl.ARRAY_BUFFER, object.Buffers.Vertex);
+// 		webgl.vertexAttribPointer(program.vertexPositionAttribute, object.Buffers.Vertex.itemSize, webgl.FLOAT, false, 0, 0);
+// 		// webgl.bindBuffer(webgl.ARRAY_BUFFER, object.Buffers.Normal);
+// 		// webgl.vertexAttribPointer(1, object.Buffers.Normal.itemSize, webgl.FLOAT, false, 0, 0);
+// 		// webgl.vertexAttribPointer(2, object.Buffers.Normal.itemSize, webgl.FLOAT, false, 0, 0);
+
+// 		webgl.bindBuffer(webgl.ELEMENT_ARRAY_BUFFER, object.Buffers.Index);
+// 		webgl.drawElements(webgl.TRIANGLES, object.Buffers.Index.numItems, webgl.UNSIGNED_SHORT, 0);
+// 	}
+	
+// 	this.disableAttributes(program);
+// 	this.shadowmap.unbind();
+
+// };
+
+Render.prototype.drawCubeMap = function() {
+	for (var i in this.cubemapObjects) {
+		var object = this.cubemapObjects[i];
+		var old_camera = this.camera;
+		var old_view = this.view;
+		var old_projection = this.projection;
+		
+		for (var fi = 0; fi < 6; fi++) {
+			var view = this.cubeframebuffer.views[fi];
+			var target = vec3.create();
+			vec3.add(object.position, view.target, target);
+			mat4.perspective(90, 1, 0.01, 1000.0, this.projection);
+			// mat4.rotate(this.view, Math.PI, [0, 1, 0]);
+			// this.camera = new Camera(object.position,target,view.up,0);
+			this.view = mat4.lookAt(object.position,target,view.up);
+			this.cubeframebuffer.bind(fi);
+			// webgl.viewport(0, 0, 512,512);
+			webgl.colorMask(true, true, true, true);
+			webgl.depthMask(true);
+			webgl.clearColor(0, 0, 0, 1.0);
+			webgl.clearDepth(1);
+			webgl.clear(webgl.COLOR_BUFFER_BIT | webgl.DEPTH_BUFFER_BIT | webgl.STENCIL_BUFFER_BIT);
+			this.drawScene(false,false);
+
+			this._drawObjects();
+		}
+		this.cubeframebuffer.unbind();
+		webgl.viewport(0, 0, webgl.viewportWidth, webgl.viewportHeight);
+		webgl.clear(webgl.COLOR_BUFFER_BIT | webgl.DEPTH_BUFFER_BIT);
+		// mat4.rotate(this.view, Math.PI, [0, 1, 0]);
+		// this.camera = new Camera([0,0.3,0.8],[0,0.3,0],1);
+		// this.view=this.camera.getViewMatrix();
+		mat4.perspective(this.view_angle, 1, 0.1, 1000.0, this.projection);
+		this.camera = old_camera;
+		this.view = old_view;
+		// this.drawScene(false,true);
+		this._drawCubeMappingObjects();
+		// this._drawObjects();
+	}
+
+};
+
+Render.prototype.drawScene = function(useCubeMap,cutbox) {
+	var program = this.shaderProgram["skybox"];
+	
+
+
+	this.swtichShader(program);
+
+	webgl.uniform3fv(program.cameraNormalUniform,this.camera.normal);
+	webgl.uniformMatrix4fv(program.pMatrixUniform, false, this.projection);
+	webgl.uniformMatrix4fv(program.mvMatrixUniform, false, this.view);
+	var scale = mat4.create();
+	mat4.identity(scale);
+	mat4.scale(scale,this.map.cubemodel.scale);
+	webgl.uniformMatrix4fv(program.worldUniform, false, scale);
+	webgl.activeTexture(webgl.TEXTURE0);
+	if(useCubeMap){
+		webgl.bindTexture(this.map.type,this.cubeframebuffer.texture);
+	}else{
+		webgl.bindTexture(this.map.type, this.map.texture);
+	}
+	webgl.uniform1i(program.samplerUniform, 0);
+
+	webgl.uniform1i(program.cutboxUniform,cutbox);
+	webgl.bindBuffer(webgl.ARRAY_BUFFER, this.map.cubemodel.Buffers.Vertex);
+	webgl.vertexAttribPointer(program.vertexPositionAttribute, this.map.cubemodel.Buffers.Vertex.itemSize, webgl.FLOAT, false, 0, 0);
+	webgl.bindBuffer(webgl.ARRAY_BUFFER, this.map.cubemodel.Buffers.Normal);
+	webgl.vertexAttribPointer(program.vertexNormalAttribute, this.map.cubemodel.Buffers.Normal.itemSize, webgl.FLOAT, false, 0, 0);
+	// webgl.vertexAttribPointer(2, this.map.cubemodel.Buffers.Normal.itemSize, webgl.FLOAT, false, 0, 0);
+
+	
+
+	webgl.bindBuffer(webgl.ELEMENT_ARRAY_BUFFER, this.map.cubemodel.Buffers.Index[0]);
+	webgl.drawElements(webgl.TRIANGLES, this.map.cubemodel.Buffers.Index[0].numItems, webgl.UNSIGNED_SHORT, 0);
+
+	this.disableAttributes(program);
+	//render objects in scene
+	
+};
+
+Render.prototype._drawAxis= function(){
+	program = this.shaderProgram["line"];
+	this.swtichShader(program);
+
+	webgl.uniformMatrix4fv(program.pMatrixUniform,false,this.projection);
+	webgl.uniformMatrix4fv(program.mvMatrixUniform, false, this.view);
+	var trans = mat4.create();
+	mat4.identity(trans);
+	webgl.uniformMatrix4fv(program.worldUniform,false,trans);
+	var axis=[];
+	if(!this.axis){
+		var x=new Line('x',[-10,0,0],[10,0,0]);
+		x.material.color=[1,0,0];
+		axis.push(x);
+		var y = new Line('y',[0,-10,0.0],[0,10,0.0]);
+		y.material.color=[0,1,0];
+		axis.push(y);
+		var z = new Line('z',[0,0,-10],[0,0,10]);
+		z.material.color = [0,0,1]
+		axis.push(z);
+		this.axis=axis;
+	}
+	axis = this.axis;
+	
+
+	for(var i in axis){
+		var obj=axis[i];
+		webgl.uniform3fv(program.colorUniform,new Float32Array(obj.material.color));
+		webgl.bindBuffer(webgl.ARRAY_BUFFER, obj.Buffers.Vertex);
+		webgl.vertexAttribPointer(program.vertexPositionAttribute, obj.Buffers.Vertex.itemSize, webgl.FLOAT, false, 0, 0);
+		// webgl.vertexAttribPointer(1, obj.Buffers.Vertex.itemSize, webgl.FLOAT, false, 0, 0);
+		// webgl.vertexAttribPointer(2, obj.Buffers.Vertex.itemSize, webgl.FLOAT, false, 0, 0);
+		webgl.drawArrays(webgl.LINES,0,obj.Buffers.Vertex.numItems);
+	}
+	this.disableAttributes(program);
+	webgl.bindBuffer(webgl.ARRAY_BUFFER,null);
+};
+Render.prototype._drawCubeMappingObjects = function(){
+
+	program = this.shaderProgram["cubemap"];
+	this.swtichShader(program);
+
+	webgl.uniformMatrix4fv(program.pMatrixUniform, false, this.projection);
+	webgl.uniformMatrix4fv(program.mvMatrixUniform, false, this.view);
+
+	var lightDir = vec3.create();
+	for(var i in this.lights){
+		var light = this.lights[i];
+		var lightVMUniform = program.lightVMatrixUniforms[i];
+		var lightPMUniform = program.lightPMatrixUniforms[i];
+		var lightPosUniform = program.lightPosUniforms[i];
+		var lightDirUniform = program.lightDirUniforms[i];
+
+		webgl.uniformMatrix4fv(lightVMUniform, false, light.view);
+		webgl.uniformMatrix4fv(lightPMUniform, false, light.projection);
+		webgl.uniform3fv(lightPosUniform, new Float32Array(light.pos));
+		vec3.subtract(light.tar,light.pos,lightDir);
+		webgl.uniform3fv(lightDirUniform,lightDir );
+		// var textureHandle = eval("webgl.TEXTURE"+i);
+		// var textureUniform = program.depthMapUniforms[i];
+		// webgl.activeTexture(textureHandle);
+		// webgl.bindTexture(webgl.TEXTURE_2D,light.shadowmap.texture);
+		// webgl.uniform1i(textureUniform,i);
+	}
+	
+	webgl.uniform1i(program.numOfLightsUniform,this.lights.length);
+	
+	webgl.activeTexture(webgl.TEXTURE0);
+	webgl.bindTexture(this.map.type,this.cubeframebuffer.texture);
+	webgl.uniform1i(program.envMapUniform,0);
+
+	webgl.uniform3fv(program.cameraPosUniform,this.camera.position);
+	webgl.uniform3fv(program.cameraNormalUniform,this.camera.normal);
+	
+
+	// webgl.bindTexture(this.map.type, this.cubeframebuffer.texture);
+	// webgl.activeTexture(webgl.TEXTURE5);
+
+	// webgl.uniform1i(program.textureUniform,5);
+	// webgl.uniform1i(program.envMapUniform, 0);
+
+
+	for (var i in this.cubemapObjects) {
+		var object = this.cubemapObjects[i];
+		var scale = mat4.create();
+		var trans = mat4.create();
+		mat4.identity(trans);
+		mat4.identity(scale);
+		mat4.scale(scale,object.scale);
+		mat4.translate(trans,object.position);
+		mat4.multiply(trans,scale);
+		webgl.uniform3fv(program.centerUniform,object.position);
+
+		
+
+
+		webgl.uniformMatrix4fv(program.rotationUniform, false, object.rotation);
+		webgl.uniformMatrix4fv(program.worldUniform,false,trans);
+
+		webgl.bindBuffer(webgl.ARRAY_BUFFER, object.Buffers.Texture);
+		webgl.vertexAttribPointer(program.textureCoordAttribute, object.Buffers.Texture.itemSize, webgl.FLOAT, false, 0, 0);
+		
+		webgl.bindBuffer(webgl.ARRAY_BUFFER, object.Buffers.Normal);
+		webgl.vertexAttribPointer(program.vertexNormalAttribute, object.Buffers.Normal.itemSize, webgl.FLOAT, false, 0, 0);
+
+		webgl.bindBuffer(webgl.ARRAY_BUFFER, object.Buffers.Vertex);
+		webgl.vertexAttribPointer(program.vertexPositionAttribute, object.Buffers.Vertex.itemSize, webgl.FLOAT, false, 0, 0);
+
+		for(var i in object.material){
+			var material = object.material[i];
+			webgl.uniform1f(program.refractivityUniform, material.refractivity);
+			webgl.uniform1f(program.reflectivityUniform, material.reflectivity);
+			webgl.uniform1f(program.glossyUniform,material.glossyness);
+
+			webgl.uniform3fv(program.colorUniform, new Float32Array(material.color));
+			webgl.bindBuffer(webgl.ELEMENT_ARRAY_BUFFER, object.Buffers.Index[i]);
+			webgl.drawElements(webgl.TRIANGLES, object.Buffers.Index[i].numItems, webgl.UNSIGNED_SHORT, 0);
+		}
+	}
+
+	this.disableAttributes(program);
+};
+
+Render.prototype._drawObjects = function() {
+
+	program = this.shaderProgram["base"];
+	this.swtichShader(program);
+
+	webgl.uniformMatrix4fv(program.pMatrixUniform, false, this.projection);
+	webgl.uniformMatrix4fv(program.mvMatrixUniform, false, this.view);
+
+	var lightDir = vec3.create();
+	for (var i in this.lights) {
+		var light = this.lights[i];
+		var lightVMUniform = program.lightVMatrixUniforms[i];
+		var lightPMUniform = program.lightPMatrixUniforms[i];
+		var lightPosUniform = program.lightPosUniforms[i];
+		var lightDirUniform = program.lightDirUniforms[i];
+
+		webgl.uniformMatrix4fv(lightVMUniform, false, light.view);
+		webgl.uniformMatrix4fv(lightPMUniform, false, light.projection);
+		webgl.uniform3fv(lightPosUniform, new Float32Array(light.pos));
+		vec3.subtract(light.tar, light.pos, lightDir);
+		webgl.uniform3fv(lightDirUniform, lightDir);
+		var textureHandle = eval("webgl.TEXTURE" + i);
+		var textureUniform = program.depthMapUniforms[i];
+		webgl.activeTexture(textureHandle);
+		webgl.bindTexture(webgl.TEXTURE_2D, light.shadowmap.texture);
+		webgl.uniform1i(textureUniform, i);
+	}
+
+	webgl.uniform1i(program.numOfLightsUniform, this.lights.length);
+
+
+
+	webgl.uniform3fv(program.cameraPosUniform, this.camera.position);
+
+	// webgl.activeTexture(webgl.TEXTURE5);
+	// webgl.bindTexture(webgl.TEXTURE_2D, this.textureTest);
+	
+	// webgl.uniform1i(program.textureUniform,5);
+	// webgl.uniform1i(program.envMapUniform, 0);
+
+	for (var i in this.objects) {
+		var object = this.objects[i];
+		var scale = mat4.create();
+		var trans = mat4.create();
+		mat4.identity(trans);
+		mat4.identity(scale);
+		mat4.scale(scale, object.scale);
+		mat4.translate(trans, object.position);
+		mat4.multiply(trans, scale);
+
+		// if (object.material.texture) {
+		// 	webgl.activeTexture(webgl.TEXTURE3);
+		// 	// webgl.bindTexture(webgl.TEXTURE_2D, object.material.texture);
+		// 	// webgl.uniform1i(program.textureUniform,3);
+		// }
+
+		
+
+		webgl.uniformMatrix4fv(program.rotationUniform, false, object.rotation);
+		webgl.uniformMatrix4fv(program.worldUniform, false, trans);
+		webgl.bindBuffer(webgl.ARRAY_BUFFER, object.Buffers.Texture);
+		webgl.vertexAttribPointer(program.textureCoordAttribute, object.Buffers.Texture.itemSize, webgl.FLOAT, false, 0, 0);
+
+		webgl.bindBuffer(webgl.ARRAY_BUFFER, object.Buffers.Normal);
+		webgl.vertexAttribPointer(program.vertexNormalAttribute, object.Buffers.Normal.itemSize, webgl.FLOAT, false, 0, 0);
+
+		webgl.bindBuffer(webgl.ARRAY_BUFFER, object.Buffers.Vertex);
+		webgl.vertexAttribPointer(program.vertexPositionAttribute, object.Buffers.Vertex.itemSize, webgl.FLOAT, false, 0, 0);
+
+		for(var i in object.material){
+			// var i =0;
+			var material = object.material[i];
+			if(!material)continue;
+			webgl.activeTexture(webgl.TEXTURE5);
+			webgl.bindTexture(webgl.TEXTURE_2D,material.texture);
+			webgl.uniform1i(program.textureUniform,5);
+
+			webgl.uniform1i(program.useTextureUniform, (material.texture!=null));
+			webgl.uniform1f(program.refractivityUniform, material.refractivity);
+			webgl.uniform1f(program.reflectivityUniform, material.reflectivity);
+			webgl.uniform3fv(program.colorUniform, new Float32Array(material.color));
+			webgl.bindBuffer(webgl.ELEMENT_ARRAY_BUFFER, object.Buffers.Index[i]);
+			webgl.drawElements(webgl.TRIANGLES, object.Buffers.Index[i].numItems, webgl.UNSIGNED_SHORT, 0);
+		}
+		
+	}
+
+	this.disableAttributes(program);
+};
+
+Render.prototype.render = function(){
+	webgl.clearColor(0.0, 0.0, 0.0, 1.0);
+	webgl.enable(webgl.DEPTH_TEST);
+ 	webgl.depthFunc(webgl.LESS);
+
+
+	webgl.disable(webgl.BLEND);
+    webgl.blendFunc(webgl.SRC_ALPHA, webgl.ONE_MINUS_SRC_ALPHA);
+
+    webgl.disable(webgl.CULL_FACE);
+
+	webgl.viewport(0, 0, webgl.viewportWidth, webgl.viewportHeight);
+	webgl.clear(webgl.COLOR_BUFFER_BIT | webgl.DEPTH_BUFFER_BIT);
+	this.drawShadows();
+	
+	this.drawCubeMap();
+
+	this._drawObjects();
+
+	this.drawScene(false,true);
+	// this._drawAxis();
+};
+
+Render.prototype.update = function() {
+	webgl.clearColor(0.0, 0.0, 0.0, 1.0);
+	webgl.enable(webgl.DEPTH_TEST);
+
+
+	webgl.viewport(0, 0, webgl.viewportWidth, webgl.viewportHeight);
+	webgl.clear(webgl.COLOR_BUFFER_BIT | webgl.DEPTH_BUFFER_BIT);
+	
+	this._drawObjects();
+};
+
+function framebuffertest(){
+	var texture = webgl.createTexture();
+	webgl.bindTexture(webgl.TEXTURE_2D, texture);
+        webgl.texParameteri(webgl.TEXTURE_2D, webgl.TEXTURE_MAG_FILTER, webgl.LINEAR);
+        webgl.texParameteri(webgl.TEXTURE_2D, webgl.TEXTURE_MIN_FILTER, webgl.LINEAR_MIPMAP_NEAREST);
+        webgl.generateMipmap(webgl.TEXTURE_2D);
+	var fb = webgl.createFramebuffer();
+	webgl.bindFramebuffer(webgl.FRAMEBUFFER,fb);
+	var rb = webgl.createRenderbuffer();
+	webgl.bindRenderbuffer(webgl.RENDERBUFFER,rb);
+	webgl.renderbufferStorage(webgl.RENDERBUFFER,webgl.DEPTH_COMPONENT16,512,512);
+	webgl.framebufferTexture2D(webgl.FRAMEBUFFER,webgl.COLOR_ATTACHMENT0,webgl.TEXTURE_2D,texture,0)
+	webgl.framebufferRenderbuffer(webgl.FRAMEBUFFER,webgl.DEPTH_ATTACHMENT,webgl.RENDERBUFFER,rb);
+	webgl.bindFramebuffer(webgl.FRAMEBUFFER,null);
+	var status = webgl.checkFramebufferStatus(webgl.FRAMEBUFFER);
+		if (status != webgl.FRAMEBUFFER_COMPLETE) {
+			throw ("webgl.checkFramebufferStatus() returned " + WebGLDebugUtils.glEnumToString(status));
+		}
+	webgl.bindRenderbuffer(webgl.RENDERBUFFER,null);
+	webgl.bindTexture(webgl.TEXTURE_CUBE_MAP, null);
+	
+}
+</script>
+<script type="text/javascript">
+
+var webgl;
+
+function initGL(canvas) {
+	try {
+		// webgl = WebGLDebugUtils.makeDebugContext(canvas.getContext("experimental-webgl"));
+		webgl =	canvas.getContext("experimental-webgl");
+		// canvas.height = $(window).height();
+		// canvas.width = $(window).width();
+		webgl.viewportWidth = canvas.width;
+		webgl.viewportHeight = canvas.height;
+
+		//enable extensions
+		var ext = (
+			webgl.getExtension("OES_texture_float_linear") ||
+			webgl.getExtension("OES_texture_half_float_linear") ||
+			webgl.getExtension("OES_texture_half_float") ||
+			webgl.getExtension("OES_texture_float") ||
+			webgl.getExtension("OES_vertex_array_object") 
+		);
+		if(!ext){
+			console.error("loading webgl extensions failed");
+		}
+
+	} catch (e) {}
+	if (!webgl) {
+		alert("Could not initialise WebGL, sorry :-(");
+	}
+}
+
+function handleMouseDown(evt){
+	// console.debug(evt.type+evt.target);
+	var obj=evt.target;
+	if(obj){
+		obj.startDrag=true;
+		obj.lastMouseX=evt.clientX;
+		obj.lastMouseY=evt.clientY;
+	}
+}
+
+function handleMouseUp(evt){
+	// console.debug(evt.type+evt.target);
+	var obj=evt.target;
+	if(obj){
+		obj.startDrag=false;
+	}
+}
+
+function handleMouseScroll(evt){
+	var deltaY=evt.wheelDelta/10000;
+	canvas.render.camera.position[1]=canvas.render.camera.position[1]+deltaY;
+	canvas.render.view=canvas.render.camera.getViewMatrix();
+}
+
+function handleMouseMove(evt){
+	// console.debug(evt.type+evt.target);
+	if(canvas.startDrag){
+		var render = canvas.render;
+		var newX = evt.clientX;
+        var newY = evt.clientY;
+      
+        var deltaX = -(newX - canvas.lastMouseX)/1800*Math.PI;
+        // var deltaY = -(newY - canvas.lastMouseY)/1800*Math.PI;
+        var deltaY = (newY - canvas.lastMouseY)/1000;
+  		render.camera.view_angle_horizon +=  deltaX;
+  		// render.camera.sight_dis+=deltaY;
+  		// render.camera.sight_dis = render.camera.sight_dis<0?0:render.camera.sight_dis;
+  		// render.camera.sight_dis = render.camera.sight_dis>1?1:render.camera.sight_dis;
+  		// render.camera.sight_dis += deltaY;
+  		// render.camera.view_angle_vertical = render.camera.view_angle_vertical + deltaX;
+  		if(render.camera.center == 'camera'){
+  			
+  			render.camera.r = Math.sqrt(render.camera.sight_dis*render.camera.sight_dis+render.camera.position[1]*render.camera.position[1]);
+  		}
+        // mat4.rotateX(render.view,deltaX);
+        // mat4.rotateY(render.view,deltaY);
+        render.view=render.camera.getViewMatrix();
+        // mat4.multiply(newView,render.view,canvas.render.view);
+        canvas.lastMouseX = newX
+        canvas.lastMouseY = newY;
+	}
+}
+
+var textures={};
+var len;
+var readyEvent = new Event("TEXTURES_READY");
+var mreadyEvent = new Event("MODEL_READY");
+var externalModels = {};
+function addToModelList(id,url){
+	externalModels[id] ={};
+	externalModels[id].url = url;
+}
+
+function convertFromJSON3MODEL (json3Model){
+				var model = new Model(id, [1, 1, 1]);
+				model.data.vertexPositions = json3Model.vertices;
+				model.data.vertexNormals = json3Model.normals;
+				model.data.vertexTextureCoords = json3Model.uvs[0];
+				model.material = [];
+				for (var i in json3Model.materials) {
+					var material = {
+						reflectivity: 1.0,
+						refractivity: 0.0,
+						glossyness: 0.0,
+						color: [1.0, 1.0, 1.0],
+						textureImage: null,
+						texture: null,
+						indices: null
+					};
+
+					var j3M = json3Model.materials[i];
+					var colorInt = j3M.DbgColor;
+					var r = (colorInt >> 16) / 256;
+					var g = (colorInt >> 8) / 256;
+					var b = (colorInt & 0xff) / 256;
+					material.color = j3M.colorDiffuse;
+					material.reflectivity = j3M.colorSpecular;
+					material.glossyness = j3M.opticalDensity;
+					material.indices = [];
+					model.material.push(material);
+				}
+				var faces = json3Model.faces;
+				for (var i = 0; i < faces.length;) {
+
+					var type = faces[i];
+					switch (type) {
+					case 2:
+						//
+						// triangle with material
+						// 00 00 00 10 = 2
+						// 2, [vertex_index, vertex_index, vertex_index],
+						// [material_index]
+						var mindex = faces[i + 4];
+						var indices = model.material[mindex].indices;
+						indices.push(faces[i + 1]);
+						indices.push(faces[i + 2]);
+						indices.push(faces[i + 3]);
+						i += 5;
+						break;
+					case 42:
+						// triangle with material, vertex uvs and vertex normals
+						// 00 10 10 10 = 42
+						// 42, [vertex_index, vertex_index, vertex_index],
+						// [material_index],
+						// [vertex_uv, vertex_uv, vertex_uv],
+						// [vertex_normal, vertex_normal, vertex_normal]
+						var m_index = faces[i+4];
+						var indices = model.material[m_index].indices;
+						indices.push(faces[i + 1]);
+						indices.push(faces[i + 2]);
+						indices.push(faces[i + 3]);
+						i+=11;
+						break;
+					default:
+
+						break;
+					}
+				}
+				model.init();
+
+				return model;
+
+}
+function loadModel() {
+	var len = Object.keys(externalModels).length;
+	for (var i in externalModels) {
+		var id = i;
+		var model = externalModels[i];
+
+		$.ajax({
+			url: model.url,
+			async: false,
+			success: function(res, status, xhr) {
+				var exModel = $.parseJSON(res);
+				var model = new Model(id,[1,1,1]);
+				model.data.vertexPositions = exModel.vertexPositions;
+				model.data.vertexNormals = exModel.vertexNormals;
+				model.data.vertexTextureCoords = exModel.vertexTextureCoords;
+				model.material[0].indices = exModel.indices;
+				model.init();
+				externalModels[id] = model;
+				// len--;
+				// if(len == 0){
+				// 	document.dispatchEvent(mreadyEvent);
+				// }
+			}
+		});
+
+	}
+}
+function addToTextures(id,src){
+	textures[id]={};
+	textures[id].src = src;
+}
+function loadTextures(){
+	len=0;
+	for(var i in textures){
+		var handle = textures[i];
+		len++;
+		handle.image = new Image();
+		handle.image.src = handle.src;
+		handle.image.onload = _onload;
+	}
+	console.debug("texture length:"+len);
+}
+
+function _onload(){
+	len--;
+	if(len == 0){
+		document.dispatchEvent(readyEvent);
+	}
+}
+var canvas;
+function webglStart() {
+	canvas = document.getElementById("canvas");
+	initGL(canvas);
+	addToTextures("px","./image/px.jpg");
+	addToTextures("nx","./image/nx.jpg");
+	addToTextures("py","./image/py.jpg");
+	addToTextures("ny","./image/ny.jpg");
+	addToTextures("pz","./image/pz.jpg");
+	addToTextures("nz","./image/nz.jpg");
+
+	addToTextures("tile","./image/tile.jpg");
+	addToTextures("wood","./image/wood_plywood_new_0014_01_s.jpg");
+	addToTextures("stone","./image/stone.jpg");
+
+
+
+
+	/*
+	LOAD MODELS
+	*/
+	addToModelList("teapot","./Teapot.json");
+	loadModel();
+	loadTextures();
+	
+		document.addEventListener(readyEvent.type,function(evt){
+		var cubemap=new CubeMap(textures.px,textures.nx,textures.py,textures.ny,textures.pz,textures.nz);
+		canvas.render=new Render(canvas,cubemap);
+		var objectId=0;
+		// var model = new Plane("plane"+(objectId++),[-0.2,-0.2],[0.2,0.2]);new Cube("cubemap"+(objectId++),[0.2,0.2,0.2]);
+		var sphere0 = new Sphere(0.125);
+		sphere0.position = [0,0.02,0];
+		sphere0.material[0].glossyness=0.3;
+
+		var cube0 = new Cube([0.1,0.1,0.1]);
+		cube0.position = [0,-0.08,-0.35];
+		cube0.bindTexture(0,textures.stone.image);
+		// cube0.material[0].color = [0.2,0.3,0.5];
+
+		var table = new Cube([0.5,0.02,0.5]);
+		table.bindTexture(0,textures.wood.image);
+		table.position = [0,-0.2,0];
+		
+		var plane = new Plane("p0",[-0.5,-0.5],[0.5,0.5]);
+		plane.position = [0,-0.2,0];
+		// plane.bindTexture(textures.wood.image);
+
+		/*
+			ADD LIGHTS
+		*/
+		var light0 = new Light([1.0,1.0,1.0],[0.0,0.0,0.0]);
+		var light1 = new Light([1.0,1.0,-1.0],[0.0,0.0,0.0]);
+		var light2 = new Light([1.0,0.1,-1.0],[0.0,0.0,0.0]);
+		// var light3 = new Light([-1.0,1.0,1.0],[0.0,0.0,0.0]);
+		canvas.render.lights.push(light2);
+		canvas.render.lights.push(light0);
+		canvas.render.lights.push(light1);
+		// canvas.render.lights.push(light2); 
+		// canvas.render.lights.push(light3); 
+		canvas.render.objects.push(cube0);
+		canvas.render.objects.push(table);
+		
+
+
+		var exModel = externalModels['teapot'];
+		if(exModel){
+			exModel.scale = [0.01,0.01,0.01];
+			exModel.position= [0.35,-0.11,-0.30];
+			exModel.material[0].glossyness=0.1;
+			exModel.material[0].color = [0.98828125, 0.81640625, 0.8125];
+			canvas.render.cubemapObjects.push(exModel);	
+		}
+		
+		
+		// canvas.render.objects.push(plane);
+
+		canvas.render.cubemapObjects.push(sphere0);
+
+		canvas.interval_handel=setInterval(function(evt){
+			canvas.render.render();	
+			// canvas.render.
+		},1000/10);
+		
+		document.onmousedown = handleMouseDown;
+        document.onmouseup = handleMouseUp;
+        document.onmousemove = handleMouseMove;
+        document.addEventListener("mousewheel",handleMouseScroll);
+	});
+	
+	//wait unit images loaded;
+	
+	// framebuffertest();
+	
+}
+
+</script>
+</head>
+<body onload="webglStart();">
+	test
+	<canvas id="canvas" style="border: none;" width="900" height="900"></canvas>
+</body>
+
+</html>
